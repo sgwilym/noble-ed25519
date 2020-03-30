@@ -117,7 +117,7 @@ class Point {
         this.WINDOW_SIZE = windowSize;
         this.PRECOMPUTES = undefined;
     }
-    static fromHex(hash, invdyy1) {
+    static getYFromHex(hash) {
         const bytes = hash instanceof Uint8Array ? hash : hexToArray(hash);
         const len = bytes.length - 1;
         const normedLast = bytes[len] & ~0x80;
@@ -127,11 +127,15 @@ class Point {
         if (y >= P) {
             throw new Error('Point#fromHex expects hex <= Fp');
         }
-        const sqrY = y * y;
-        const { d } = exports.CURVE_PARAMS;
-        if (invdyy1 == null)
-            invdyy1 = modInverse(d * sqrY + 1n);
-        const sqrX = mod((sqrY - 1n) * invdyy1);
+        return [y, isLastByteOdd];
+    }
+    static fromY(ybt, invdyy1) {
+        const [y, isLastByteOdd] = ybt;
+        if (invdyy1 == null) {
+            const { d } = exports.CURVE_PARAMS;
+            invdyy1 = modInverse(d * y * y + 1n);
+        }
+        const sqrX = mod((y * y - 1n) * invdyy1);
         let x = powMod(sqrX, (P + 3n) / 8n, P);
         if (mod(x * x - sqrX, P) !== 0n) {
             x = mod(x * I, P);
@@ -141,6 +145,9 @@ class Point {
             x = mod(-x, P);
         }
         return new Point(x, y);
+    }
+    static fromHex(hash, invdyy1) {
+        return this.fromY(this.getYFromHex(hash), invdyy1);
     }
     encode() {
         let hex = this.y.toString(16);
@@ -243,10 +250,8 @@ class SignResult {
         this.s = s;
     }
     static fromHex(hex) {
-        hex = normalizeHash(hex);
-        const r = Point.fromHex(hex.slice(0, 32));
-        const s = arrayToNumberLE(hex.slice(32));
-        return new SignResult(r, s);
+        const [r, s] = hexToRS(hex);
+        return new SignResult(Point.fromHex(r), s);
     }
     toHex() {
         const numberBytes = hexToArray(numberToHex(this.s)).reverse();
@@ -335,6 +340,15 @@ function arrayToNumberLE(uint8a) {
         value += BigInt(uint8a[i]) << 8n * BigInt(i);
     }
     return value;
+}
+function hexToRS(hex) {
+    hex = normalizeHash(hex);
+    if (hex.length !== 64) {
+        throw new Error('ed25519: Expected 64-byte signature');
+    }
+    const r = hex.slice(0, 32);
+    const s = arrayToNumberLE(hex.slice(32));
+    return [r, s];
 }
 function mod(a, b = P) {
     const res = a % b;
@@ -432,15 +446,6 @@ function normalizePrivateKey(privateKey) {
 function normalizePublicKey(publicKey) {
     return publicKey instanceof Point ? publicKey : Point.fromHex(publicKey);
 }
-function normalizePoint(point, privateKey) {
-    if (privateKey instanceof Uint8Array) {
-        return point.encode();
-    }
-    if (typeof privateKey === 'string') {
-        return point.toHex();
-    }
-    return point;
-}
 function normalizeSignature(signature) {
     return signature instanceof SignResult ? signature : SignResult.fromHex(signature);
 }
@@ -451,9 +456,11 @@ async function getPublicKey(privateKey) {
     const multiplier = normalizePrivateKey(privateKey);
     const privateBytes = await getPrivateBytes(multiplier);
     const privateInt = encodePrivate(privateBytes);
-    const publicKey = BASE_POINT.multiply(privateInt);
-    const p = normalizePoint(publicKey, privateKey);
-    return p;
+    const point = BASE_POINT.multiply(privateInt);
+    if (typeof privateKey === 'string') {
+        return point.toHex();
+    }
+    return point.encode();
 }
 exports.getPublicKey = getPublicKey;
 async function sign(hash, privateKey) {
@@ -464,23 +471,61 @@ async function sign(hash, privateKey) {
     const privatePrefix = keyPrefix(privateBytes);
     const r = await hashNumber(privatePrefix, message);
     const R = BASE_POINT.multiply(r);
-    const h = await hashNumber(R.encode(), publicKey.encode(), message);
+    const h = await hashNumber(R.encode(), publicKey, message);
     const S = mod(r + h * encodePrivate(privateBytes), PRIME_ORDER);
     const signature = new SignResult(R, S).toHex();
     return hash instanceof Uint8Array ? hexToArray(signature) : signature;
 }
 exports.sign = sign;
+function _verifyNormalized(signature, hash, publicKey) {
+    const pub = ExtendedPoint.fromPoint(publicKey);
+    const S = BASE_POINT.multiply(signature.s, false);
+    const R = ExtendedPoint.fromPoint(signature.r).add(pub.multiplyUnsafe(hash));
+    return S.equals(R);
+}
 async function verify(signature, hash, publicKey) {
     hash = normalizeHash(hash);
     publicKey = normalizePublicKey(publicKey);
     signature = normalizeSignature(signature);
     const h = await hashNumber(signature.r.encode(), publicKey.encode(), hash);
-    const pub = ExtendedPoint.fromPoint(publicKey);
-    const S = BASE_POINT.multiply(signature.s, false);
-    const R = ExtendedPoint.fromPoint(signature.r).add(pub.multiplyUnsafe(h));
-    return S.equals(R);
+    return _verifyNormalized(signature, h, publicKey);
 }
 exports.verify = verify;
+function assertHex(item) {
+    if ((typeof item !== 'string') && !(item instanceof Uint8Array)) {
+        throw new TypeError('hex expected');
+    }
+    ;
+}
+async function verifyBatch(...signatures) {
+    const mul = (y) => exports.CURVE_PARAMS.d * y * y + 1n;
+    const nrm = signatures
+        .map(([sig, msg, pub]) => {
+        assertHex(sig);
+        assertHex(msg);
+        assertHex(pub);
+        const [r, s] = hexToRS(sig);
+        return [Point.getYFromHex(r), s, Point.getYFromHex(pub), normalizeHash(msg)];
+    });
+    const hexY = batchInverse(nrm.map(item => mul(item[0][0])));
+    const pubY = batchInverse(nrm.map(item => mul(item[2][0])));
+    const hashes = nrm.map(item => item[3]);
+    const sigPoints = nrm.map((args, index) => {
+        const [r, s, pub] = args;
+        const sig = new SignResult(Point.fromY(r, hexY[index]), s);
+        const publicKey = Point.fromY(pub, pubY[index]);
+        return [sig, publicKey];
+    });
+    const hs = await Promise.all(hashes.map((hash, index) => {
+        const [sig, publicKey] = sigPoints[index];
+        return hashNumber(sig.r.encode(), publicKey.encode(), hash);
+    }));
+    return hs.map((h, index) => {
+        const [sig, publicKey] = sigPoints[index];
+        return _verifyNormalized(sig, h, publicKey);
+    });
+}
+exports.verifyBatch = verifyBatch;
 BASE_POINT._setWindowSize(4);
 exports.utils = {
     generateRandomPrivateKey,

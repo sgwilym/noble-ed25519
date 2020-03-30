@@ -150,6 +150,8 @@ class ExtendedPoint {
   }
 }
 
+type yAndLByte = [bigint, boolean];
+
 // Default Point works in default aka affine coordinates: (x, y)
 export class Point {
   // Base point aka generator
@@ -171,9 +173,8 @@ export class Point {
     this.WINDOW_SIZE = windowSize;
     this.PRECOMPUTES = undefined;
   }
-  // Converts hash string or Uint8Array to Point.
-  // Uses algo from RFC8032 5.1.3.
-  static fromHex(hash: Hex, invdyy1?: bigint) {
+
+  static getYFromHex(hash: Hex): yAndLByte {
     const bytes = hash instanceof Uint8Array ? hash : hexToArray(hash);
     const len = bytes.length - 1;
     const normedLast = bytes[len] & ~0x80;
@@ -183,10 +184,12 @@ export class Point {
     if (y >= P) {
       throw new Error('Point#fromHex expects hex <= Fp');
     }
-    const sqrY = y * y;
-    const { d } = CURVE_PARAMS;
-    if (invdyy1 == null) invdyy1 = modInverse(d * sqrY + 1n);
-    const sqrX = mod((sqrY - 1n) * invdyy1);
+    return [y, isLastByteOdd];
+  }
+
+  static fromY(ybt: yAndLByte, invdyy1: bigint) {
+    const [y, isLastByteOdd] = ybt;
+    const sqrX = mod((y * y - 1n) * invdyy1);
     let x = powMod(sqrX, (P + 3n) / 8n, P);
     if (mod(x * x - sqrX, P) !== 0n) {
       x = mod(x * I, P);
@@ -196,6 +199,14 @@ export class Point {
       x = mod(-x, P);
     }
     return new Point(x, y);
+  }
+
+  // Converts hash string or Uint8Array to Point.
+  // Uses algo from RFC8032 5.1.3.
+  static fromHex(hash: Hex) {
+    const yb = this.getYFromHex(hash);
+    const y = yb[0];
+    return this.fromY(yb, modInverse(CURVE_PARAMS.d * y * y + 1n));
   }
 
   encode(): Uint8Array {
@@ -321,10 +332,8 @@ export class SignResult {
   constructor(public r: Point, public s: bigint) {}
 
   static fromHex(hex: Hex) {
-    hex = normalizeHash(hex);
-    const r = Point.fromHex(hex.slice(0, 32));
-    const s = arrayToNumberLE(hex.slice(32));
-    return new SignResult(r, s);
+    const [r, s] = hexToRS(hex);
+    return new SignResult(Point.fromHex(r), s);
   }
 
   toHex() {
@@ -426,6 +435,16 @@ function arrayToNumberLE(uint8a: Uint8Array): bigint {
     value += BigInt(uint8a[i]) << 8n * BigInt(i);
   }
   return value;
+}
+
+function hexToRS(hex: Hex): [Uint8Array, bigint] {
+  hex = normalizeHash(hex);
+  if (hex.length !== 64) {
+    throw new Error('ed25519: Expected 64-byte signature');
+  }
+  const r = hex.slice(0, 32);
+  const s = arrayToNumberLE(hex.slice(32));
+  return [r, s];
 }
 
 // -------------------------
@@ -536,16 +555,6 @@ function normalizePublicKey(publicKey: PubKey): Point {
   return publicKey instanceof Point ? publicKey : Point.fromHex(publicKey);
 }
 
-function normalizePoint(point: Point, privateKey: PrivKey): Uint8Array | string | Point {
-  if (privateKey instanceof Uint8Array) {
-    return point.encode();
-  }
-  if (typeof privateKey === 'string') {
-    return point.toHex();
-  }
-  return point;
-}
-
 function normalizeSignature(signature: Signature): SignResult {
   return signature instanceof SignResult ? signature : SignResult.fromHex(signature);
 }
@@ -556,14 +565,16 @@ function normalizeHash(hash: Hex) {
 
 export function getPublicKey(privateKey: Uint8Array): Promise<Uint8Array>;
 export function getPublicKey(privateKey: string): Promise<string>;
-export function getPublicKey(privateKey: bigint | number): Promise<Point>;
+export function getPublicKey(privateKey: bigint | number): Promise<Uint8Array>;
 export async function getPublicKey(privateKey: PrivKey) {
   const multiplier = normalizePrivateKey(privateKey);
   const privateBytes = await getPrivateBytes(multiplier);
   const privateInt = encodePrivate(privateBytes);
-  const publicKey = BASE_POINT.multiply(privateInt);
-  const p = normalizePoint(publicKey, privateKey);
-  return p;
+  const point = BASE_POINT.multiply(privateInt);
+  if (typeof privateKey === 'string') {
+    return point.toHex();
+  }
+  return point.encode();
 }
 
 export function sign(hash: Uint8Array, privateKey: PrivKey): Promise<Uint8Array>;
@@ -576,10 +587,17 @@ export async function sign(hash: Hex, privateKey: PrivKey) {
   const privatePrefix = keyPrefix(privateBytes);
   const r = await hashNumber(privatePrefix, message);
   const R = BASE_POINT.multiply(r);
-  const h = await hashNumber(R.encode(), publicKey.encode(), message);
+  const h = await hashNumber(R.encode(), publicKey, message);
   const S = mod(r + h * encodePrivate(privateBytes), PRIME_ORDER);
   const signature = new SignResult(R, S).toHex();
   return hash instanceof Uint8Array ? hexToArray(signature) : signature;
+}
+
+function _verifyNormalized(signature: SignResult, hash: bigint, publicKey: Point) {
+  const pub = ExtendedPoint.fromPoint(publicKey);
+  const S = BASE_POINT.multiply(signature.s, false);
+  const R = ExtendedPoint.fromPoint(signature.r).add(pub.multiplyUnsafe(hash));
+  return S.equals(R);
 }
 
 export async function verify(signature: Signature, hash: Hex, publicKey: PubKey) {
@@ -587,10 +605,42 @@ export async function verify(signature: Signature, hash: Hex, publicKey: PubKey)
   publicKey = normalizePublicKey(publicKey);
   signature = normalizeSignature(signature);
   const h = await hashNumber(signature.r.encode(), publicKey.encode(), hash);
-  const pub = ExtendedPoint.fromPoint(publicKey);
-  const S = BASE_POINT.multiply(signature.s, false);
-  const R = ExtendedPoint.fromPoint(signature.r).add(pub.multiplyUnsafe(h));
-  return S.equals(R);
+  return _verifyNormalized(signature, h, publicKey);
+}
+
+function assertHex(item: any) {
+  if ( (typeof item !== 'string') && !(item instanceof Uint8Array) ) {
+    throw new TypeError('hex expected');
+  };
+}
+
+export async function verifyBatch(...signatures: [Hex, Hex, Hex][]) {
+  const mul = (y: bigint) => CURVE_PARAMS.d * y * y + 1n;
+  const nrm: [yAndLByte, bigint, yAndLByte, Uint8Array][] = signatures
+    .map(([sig, msg, pub]) => {
+      assertHex(sig);
+      assertHex(msg);
+      assertHex(pub);
+      const [r, s] = hexToRS(sig);
+      return [Point.getYFromHex(r), s, Point.getYFromHex(pub), normalizeHash(msg)];
+    });
+  const hexY = batchInverse(nrm.map(item => mul(item[0][0])));
+  const pubY = batchInverse(nrm.map(item => mul(item[2][0])));
+  const hashes = nrm.map(item => item[3]);
+  const sigPoints: [SignResult, Point][] = nrm.map((args, index) => {
+    const [r, s, pub] = args;
+    const sig = new SignResult(Point.fromY(r, hexY[index]), s);
+    const publicKey = Point.fromY(pub, pubY[index]);
+    return [sig, publicKey];
+  });
+  const hs = await Promise.all(hashes.map((hash, index) => {
+    const [sig, publicKey] = sigPoints[index];
+    return hashNumber(sig.r.encode(), publicKey.encode(), hash);
+  }));
+  return hs.map((h, index) => {
+    const [sig, publicKey] = sigPoints[index];
+    return _verifyNormalized(sig, h, publicKey);
+  });
 }
 
 // Enable precomputes. Slows down first publicKey computation by 20ms.

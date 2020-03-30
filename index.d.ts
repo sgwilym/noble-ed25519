@@ -28,6 +28,7 @@ declare class ExtendedPoint {
     multiplyUnsafe(scalar: bigint): ExtendedPoint;
     toAffine(invZ?: bigint): Point;
 }
+declare type yAndLByte = [bigint, boolean];
 export declare class Point {
     x: bigint;
     y: bigint;
@@ -37,6 +38,8 @@ export declare class Point {
     private PRECOMPUTES?;
     constructor(x: bigint, y: bigint);
     _setWindowSize(windowSize: number): void;
+    static getYFromHex(hash: Hex): yAndLByte;
+    static fromY(ybt: yAndLByte, invdyy1?: bigint): Point;
     static fromHex(hash: Hex, invdyy1?: bigint): Point;
     encode(): Uint8Array;
     toHex(): string;
@@ -58,10 +61,11 @@ export declare class SignResult {
 }
 export declare function getPublicKey(privateKey: Uint8Array): Promise<Uint8Array>;
 export declare function getPublicKey(privateKey: string): Promise<string>;
-export declare function getPublicKey(privateKey: bigint | number): Promise<Point>;
+export declare function getPublicKey(privateKey: bigint | number): Promise<Uint8Array>;
 export declare function sign(hash: Uint8Array, privateKey: PrivKey): Promise<Uint8Array>;
 export declare function sign(hash: string, privateKey: PrivKey): Promise<string>;
 export declare function verify(signature: Signature, hash: Hex, publicKey: PubKey): Promise<boolean>;
+export declare function verifyBatch(...signatures: [Hex, Hex, Hex][]): Promise<boolean[]>;
 export declare const utils: {
     generateRandomPrivateKey: (bytesLength?: number) => Uint8Array;
     precompute(windowSize?: number, point?: Point): Point;

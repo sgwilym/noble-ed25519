@@ -3,41 +3,55 @@ let ed = require('.');
 
 run(async () => {
   // warm-up
-  let pubHex;
   await mark(() => {
     ed.utils.precompute();
   });
-
   logMem();
   console.log();
-
-
   await mark('getPublicKey 1 bit', 1000, async () => {
-    pubHex = await ed.getPublicKey(2n);
+    await ed.getPublicKey(2n);
   });
 
-  // console.profile('cpu');
-  const priv = 0x9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60n;
-  await mark('getPublicKey', 1000, async () => {
-    pubHex = await ed.getPublicKey(priv);
-  });
+  const privKeys = new Array(1024).fill(0).map(a => ed.utils.generateRandomPrivateKey());
+  const messages = new Array(1024).fill(0).map(a => ed.utils.generateRandomPrivateKey());
+  let pubKeys, signatures, verifications, verificationsB;
 
-  const msgHex = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
-  let sigHex;
-  await mark('sign', 1000, async () => {
-    sigHex = await ed.sign(msgHex, priv);
+  await mark('getPublicKey', async () => {
+    pubKeys = await Promise.all(privKeys.map(priv => ed.getPublicKey(priv)));
   });
+  await mark('sign', async () => {
+    signatures = await Promise.all(messages.map((m, i) => ed.sign(m, privKeys[i])));
+  });
+  const batch = signatures.map((s, i) => [s, messages[i], pubKeys[i]]);
+  await mark('verify', async () => {
+    console.profile('verify');
+    verifications = await Promise.all(batch.map(s => ed.verify(...s)));
+    console.profileEnd('verify');
+  });
+  await mark('verifyBatch', async () => {
+    console.profile('verifyBatch');
+    verificationsB = await ed.verifyBatch(...batch);
+    console.profileEnd('verifyBatch');
+  });
+  debugger;
+  console.log(123, verifications, verificationsB);
 
-  const sig = ed.SignResult.fromHex(sigHex);
-  const pub = ed.Point.fromHex(pubHex);
-  // console.profile('bench');
-  await mark('verify', 1000, async () => {
-    const verified = await ed.verify(sigHex, msgHex, pubHex);
-  });
-  await mark('verifyBatch', 1000, async () => {
-    const verified = await ed.verify(sig, msgHex, pub);
-  });
-  // console.profileEnd('bench'); debugger;
+  // // const sig = ed.SignResult.fromHex(sigHex);
+  // // const pub = ed.Point.fromHex(pubHex);
+  // await mark('verify', async () => {
+  //   console.profile('a')
+  //   for (let sigHex of sigHexes) {
+  //     const verified = await ed.verify(sigHex, msgHex, pubHex);
+  //   }
+  // });
+
+  // await mark('verifyBatch', 1, async () => {
+  //   console.profile('a')
+  //   const list = sigHexes.map(s => [s, msgHex, pubHex]);
+  //   // console.log(list);
+  //   const verified = await ed.verifyBatch(...list);
+  //   console.profileEnd('a'); debugger;
+  // });
 
   console.log();
   logMem();
