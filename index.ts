@@ -616,31 +616,52 @@ function assertHex(item: any) {
 
 export async function verifyBatch(...signatures: [Hex, Hex, Hex][]) {
   const mul = (y: bigint) => CURVE_PARAMS.d * y * y + 1n;
-  const nrm: [yAndLByte, bigint, yAndLByte, Uint8Array][] = signatures
-    .map(([sig, msg, pub]) => {
-      assertHex(sig);
-      assertHex(msg);
-      assertHex(pub);
-      const [r, s] = hexToRS(sig);
-      return [Point.getYFromHex(r), s, Point.getYFromHex(pub), normalizeHash(msg)];
-    });
-  const hexY = batchInverse(nrm.map(item => mul(item[0][0])));
-  const pubY = batchInverse(nrm.map(item => mul(item[2][0])));
-  const hashes = nrm.map(item => item[3]);
-  const sigPoints: [SignResult, Point][] = nrm.map((args, index) => {
-    const [r, s, pub] = args;
-    const sig = new SignResult(Point.fromY(r, hexY[index]), s);
-    const publicKey = Point.fromY(pub, pubY[index]);
-    return [sig, publicKey];
-  });
-  const hs = await Promise.all(hashes.map((hash, index) => {
-    const [sig, publicKey] = sigPoints[index];
-    return hashNumber(sig.r.encode(), publicKey.encode(), hash);
+  const total = signatures.length;
+  let hexY = new Array(total);
+  let pubY = new Array(total);
+  let hashes = new Array(total);
+  let rys = new Array(total);
+  let pys = new Array(total);
+  let ss = new Array(total);
+  let sigs = new Array(total);
+  let pubs = new Array(total);
+  let fin = new Array(total);
+
+  for (let i = 0; i < total; i++) {
+    const args = signatures[i];
+    const [sig, msg, pub] = args;
+    assertHex(sig);
+    assertHex(msg);
+    assertHex(pub);
+    const [r, s] = hexToRS(sig);
+    const ry = Point.getYFromHex(r);
+    const py = Point.getYFromHex(pub);
+    const hash = normalizeHash(msg);
+    hexY[i] = mul(ry[0]);
+    pubY[i] = mul(py[0]);
+    hashes[i] = hash;
+    rys[i] = ry;
+    ss[i] = s;
+    pys[i] = py;
+  }
+  batchInverse(hexY);
+  batchInverse(pubY);
+
+  for (let i = 0; i < total; i++) {
+    const ry = rys[i], s = ss[i], py = pys[i];
+    sigs[i] = new SignResult(Point.fromY(ry, hexY[i]), s);
+    pubs[i] = Point.fromY(py, pubY[i]);
+  }
+  const hs = await Promise.all(hashes.map((hash, i) => {
+    return hashNumber(sigs[i].r.encode(), pubs[i].encode(), hash);
   }));
-  return hs.map((h, index) => {
-    const [sig, publicKey] = sigPoints[index];
-    return _verifyNormalized(sig, h, publicKey);
-  });
+
+  for (let i = 0; i < total; i++) {
+    fin[i] = _verifyNormalized(sigs[i], hs[i], pubs[i]);
+  }
+  //hexY.length = pubY.length = hashes.length = rys.length = pys.length = 0;
+  //ss.length = sigs.length = pubs.length = 0
+  return fin;
 }
 
 // Enable precomputes. Slows down first publicKey computation by 20ms.

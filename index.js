@@ -131,10 +131,6 @@ class Point {
     }
     static fromY(ybt, invdyy1) {
         const [y, isLastByteOdd] = ybt;
-        if (invdyy1 == null) {
-            const { d } = exports.CURVE_PARAMS;
-            invdyy1 = modInverse(d * y * y + 1n);
-        }
         const sqrX = mod((y * y - 1n) * invdyy1);
         let x = powMod(sqrX, (P + 3n) / 8n, P);
         if (mod(x * x - sqrX, P) !== 0n) {
@@ -146,8 +142,10 @@ class Point {
         }
         return new Point(x, y);
     }
-    static fromHex(hash, invdyy1) {
-        return this.fromY(this.getYFromHex(hash), invdyy1);
+    static fromHex(hash) {
+        const yb = this.getYFromHex(hash);
+        const y = yb[0];
+        return this.fromY(yb, modInverse(exports.CURVE_PARAMS.d * y * y + 1n));
     }
     encode() {
         let hex = this.y.toString(16);
@@ -499,31 +497,47 @@ function assertHex(item) {
 }
 async function verifyBatch(...signatures) {
     const mul = (y) => exports.CURVE_PARAMS.d * y * y + 1n;
-    const nrm = signatures
-        .map(([sig, msg, pub]) => {
+    const total = signatures.length;
+    let hexY = new Array(total);
+    let pubY = new Array(total);
+    let hashes = new Array(total);
+    let rys = new Array(total);
+    let pys = new Array(total);
+    let ss = new Array(total);
+    let sigs = new Array(total);
+    let pubs = new Array(total);
+    let fin = new Array(total);
+    for (let i = 0; i < total; i++) {
+        const args = signatures[i];
+        const [sig, msg, pub] = args;
         assertHex(sig);
         assertHex(msg);
         assertHex(pub);
         const [r, s] = hexToRS(sig);
-        return [Point.getYFromHex(r), s, Point.getYFromHex(pub), normalizeHash(msg)];
-    });
-    const hexY = batchInverse(nrm.map(item => mul(item[0][0])));
-    const pubY = batchInverse(nrm.map(item => mul(item[2][0])));
-    const hashes = nrm.map(item => item[3]);
-    const sigPoints = nrm.map((args, index) => {
-        const [r, s, pub] = args;
-        const sig = new SignResult(Point.fromY(r, hexY[index]), s);
-        const publicKey = Point.fromY(pub, pubY[index]);
-        return [sig, publicKey];
-    });
-    const hs = await Promise.all(hashes.map((hash, index) => {
-        const [sig, publicKey] = sigPoints[index];
-        return hashNumber(sig.r.encode(), publicKey.encode(), hash);
+        const ry = Point.getYFromHex(r);
+        const py = Point.getYFromHex(pub);
+        const hash = normalizeHash(msg);
+        hexY[i] = mul(ry[0]);
+        pubY[i] = mul(py[0]);
+        hashes[i] = hash;
+        rys[i] = ry;
+        ss[i] = s;
+        pys[i] = py;
+    }
+    batchInverse(hexY);
+    batchInverse(pubY);
+    for (let i = 0; i < total; i++) {
+        const ry = rys[i], s = ss[i], py = pys[i];
+        sigs[i] = new SignResult(Point.fromY(ry, hexY[i]), s);
+        pubs[i] = Point.fromY(py, pubY[i]);
+    }
+    const hs = await Promise.all(hashes.map((hash, i) => {
+        return hashNumber(sigs[i].r.encode(), pubs[i].encode(), hash);
     }));
-    return hs.map((h, index) => {
-        const [sig, publicKey] = sigPoints[index];
-        return _verifyNormalized(sig, h, publicKey);
-    });
+    for (let i = 0; i < total; i++) {
+        fin[i] = _verifyNormalized(sigs[i], hs[i], pubs[i]);
+    }
+    return fin;
 }
 exports.verifyBatch = verifyBatch;
 BASE_POINT._setWindowSize(4);

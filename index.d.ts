@@ -39,8 +39,8 @@ export declare class Point {
     constructor(x: bigint, y: bigint);
     _setWindowSize(windowSize: number): void;
     static getYFromHex(hash: Hex): yAndLByte;
-    static fromY(ybt: yAndLByte, invdyy1?: bigint): Point;
-    static fromHex(hash: Hex, invdyy1?: bigint): Point;
+    static fromY(ybt: yAndLByte, invdyy1: bigint): Point;
+    static fromHex(hash: Hex): Point;
     encode(): Uint8Array;
     toHex(): string;
     toX25519(): bigint;
@@ -65,7 +65,7 @@ export declare function getPublicKey(privateKey: bigint | number): Promise<Uint8
 export declare function sign(hash: Uint8Array, privateKey: PrivKey): Promise<Uint8Array>;
 export declare function sign(hash: string, privateKey: PrivKey): Promise<string>;
 export declare function verify(signature: Signature, hash: Hex, publicKey: PubKey): Promise<boolean>;
-export declare function verifyBatch(...signatures: [Hex, Hex, Hex][]): Promise<boolean[]>;
+export declare function verifyBatch(...signatures: [Hex, Hex, Hex][]): Promise<any[]>;
 export declare const utils: {
     generateRandomPrivateKey: (bytesLength?: number) => Uint8Array;
     precompute(windowSize?: number, point?: Point): Point;
