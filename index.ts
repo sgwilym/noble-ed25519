@@ -3,8 +3,6 @@
 // https://tools.ietf.org/html/rfc8032, https://en.wikipedia.org/wiki/EdDSA
 // Includes Ristretto https://ristretto.group
 
-import nodeCrypto from 'crypto';
-
 // Be friendly to bad ECMAScript parsers by not using bigint literals like 123n
 const _0n = BigInt(0);
 const _1n = BigInt(1);
@@ -17,16 +15,22 @@ const CURVE = {
   a: BigInt(-1),
   // Equal to -121665/121666 over finite field.
   // Negative number is P - number, and division is invert(number, P)
-  d: BigInt('37095705934669439343138083508754565189542113879843219016388785533085940283555'),
+  d: BigInt(
+    "37095705934669439343138083508754565189542113879843219016388785533085940283555",
+  ),
   // Finite field 𝔽p over which we'll do calculations
   P: _2n ** _255n - BigInt(19),
   // Subgroup order aka C
-  n: _2n ** BigInt(252) + BigInt('27742317777372353535851937790883648493'),
+  n: _2n ** BigInt(252) + BigInt("27742317777372353535851937790883648493"),
   // Cofactor
   h: BigInt(8),
   // Base point (x, y) aka generator point
-  Gx: BigInt('15112221349535400772501151409588531511454012693041857206046113283949847762202'),
-  Gy: BigInt('46316835694926478169428394003475163141307993866256225615783033603165251855960'),
+  Gx: BigInt(
+    "15112221349535400772501151409588531511454012693041857206046113283949847762202",
+  ),
+  Gy: BigInt(
+    "46316835694926478169428394003475163141307993866256225615783033603165251855960",
+  ),
 };
 
 // Cleaner output this way.
@@ -39,36 +43,46 @@ type SigType = Hex | Signature;
 
 // √(-1) aka √(a) aka 2^((p-1)/4)
 const SQRT_M1 = BigInt(
-  '19681161376707505956807079304988542015446066515923890162744021073123829784752'
+  "19681161376707505956807079304988542015446066515923890162744021073123829784752",
 );
 // √(ad - 1)
 const SQRT_AD_MINUS_ONE = BigInt(
-  '25063068953384623474111414158702152701244531502492656460079210482610430750235'
+  "25063068953384623474111414158702152701244531502492656460079210482610430750235",
 );
 // 1 / √(a-d)
 const INVSQRT_A_MINUS_D = BigInt(
-  '54469307008909316920995813868745141605393597292927456921205312896311721017578'
+  "54469307008909316920995813868745141605393597292927456921205312896311721017578",
 );
 // 1-d²
 const ONE_MINUS_D_SQ = BigInt(
-  '1159843021668779879193775521855586647937357759715417654439879720876111806838'
+  "1159843021668779879193775521855586647937357759715417654439879720876111806838",
 );
 // (d-1)²
 const D_MINUS_ONE_SQ = BigInt(
-  '40440834346308536858101042469323190826248399146238708352240133220865137265952'
+  "40440834346308536858101042469323190826248399146238708352240133220865137265952",
 );
 
 // Default Point works in default aka affine coordinates: (x, y)
 // Extended Point works in extended coordinates: (x, y, z, t) ∋ (x=x/z, y=y/z, t=xy)
 // https://en.wikipedia.org/wiki/Twisted_Edwards_curve#Extended_coordinates
 class ExtendedPoint {
-  constructor(readonly x: bigint, readonly y: bigint, readonly z: bigint, readonly t: bigint) {}
+  constructor(
+    readonly x: bigint,
+    readonly y: bigint,
+    readonly z: bigint,
+    readonly t: bigint,
+  ) {}
 
-  static BASE = new ExtendedPoint(CURVE.Gx, CURVE.Gy, _1n, mod(CURVE.Gx * CURVE.Gy));
+  static BASE = new ExtendedPoint(
+    CURVE.Gx,
+    CURVE.Gy,
+    _1n,
+    mod(CURVE.Gx * CURVE.Gy),
+  );
   static ZERO = new ExtendedPoint(_0n, _1n, _1n, _0n);
   static fromAffine(p: Point): ExtendedPoint {
     if (!(p instanceof Point)) {
-      throw new TypeError('ExtendedPoint#fromAffine: expected Point');
+      throw new TypeError("ExtendedPoint#fromAffine: expected Point");
     }
     if (p.equals(Point.ZERO)) return ExtendedPoint.ZERO;
     return new ExtendedPoint(p.x, p.y, _1n, mod(p.x * p.y));
@@ -118,7 +132,12 @@ class ExtendedPoint {
     const W1 = mod(Nt * SQRT_AD_MINUS_ONE); // 11
     const W2 = mod(_1n - s2); // 12
     const W3 = mod(_1n + s2); // 13
-    return new ExtendedPoint(mod(W0 * W3), mod(W2 * W1), mod(W1 * W3), mod(W0 * W2));
+    return new ExtendedPoint(
+      mod(W0 * W3),
+      mod(W2 * W1),
+      mod(W1 * W3),
+      mod(W0 * W2),
+    );
   }
 
   // Ristretto: Decoding to Extended Coordinates
@@ -127,11 +146,14 @@ class ExtendedPoint {
     bytes = ensureBytes(bytes);
     assertLen(32, bytes);
     const { a, d } = CURVE;
-    const emsg = 'ExtendedPoint.fromRistrettoBytes: Cannot convert bytes to Ristretto Point';
+    const emsg =
+      "ExtendedPoint.fromRistrettoBytes: Cannot convert bytes to Ristretto Point";
     const s = bytes255ToNumberLE(bytes);
     // 1. Check that s_bytes is the canonical encoding of a field element, or else abort.
     // 3. Check that s is non-negative, or else abort
-    if (!equalBytes(numberToBytesLEPadded(s, 32), bytes) || edIsNegative(s)) throw new Error(emsg);
+    if (!equalBytes(numberToBytesLEPadded(s, 32), bytes) || edIsNegative(s)) {
+      throw new Error(emsg);
+    }
     const s2 = mod(s * s);
     const u1 = mod(_1n + a * s2); // 4 (a is -1)
     const u2 = mod(_1n - a * s2); // 5
@@ -282,10 +304,14 @@ class ExtendedPoint {
   }
 
   private wNAF(n: bigint, affinePoint?: Point): [ExtendedPoint, ExtendedPoint] {
-    if (!affinePoint && this.equals(ExtendedPoint.BASE)) affinePoint = Point.BASE;
+    if (!affinePoint && this.equals(ExtendedPoint.BASE)) {
+      affinePoint = Point.BASE;
+    }
     const W = (affinePoint && affinePoint._WINDOW_SIZE) || 1;
     if (256 % W) {
-      throw new Error('Point#wNAF: Invalid precomputation window, must be power of 2');
+      throw new Error(
+        "Point#wNAF: Invalid precomputation window, must be power of 2",
+      );
     }
 
     let precomputes = affinePoint && pointPrecomputes.get(affinePoint);
@@ -392,7 +418,7 @@ class Point {
     normed[31] = bytes[31] & ~0x80;
     const y = bytesToNumberLE(normed);
 
-    if (y >= P) throw new Error('Point.fromHex expects hex <= Fp');
+    if (y >= P) throw new Error("Point.fromHex expects hex <= Fp");
 
     // 2.  To recover the x-coordinate, the curve equation implies
     // x² = (y² - 1) / (d y² + 1) (mod p).  The denominator is always
@@ -401,7 +427,7 @@ class Point {
     const u = mod(y2 - _1n);
     const v = mod(d * y2 + _1n);
     let { isValid, value: x } = uvRatio(u, v);
-    if (!isValid) throw new Error('Point.fromHex: invalid y coordinate');
+    if (!isValid) throw new Error("Point.fromHex: invalid y coordinate");
 
     // 4.  Finally, use the x_0 bit to select the right square root.  If
     // x = 0, and x_0 = 1, decoding fails.  Otherwise, if x_0 != x mod
@@ -452,7 +478,8 @@ class Point {
   }
 
   add(other: Point) {
-    return ExtendedPoint.fromAffine(this).add(ExtendedPoint.fromAffine(other)).toAffine();
+    return ExtendedPoint.fromAffine(this).add(ExtendedPoint.fromAffine(other))
+      .toAffine();
   }
 
   subtract(other: Point) {
@@ -468,7 +495,7 @@ class Point {
 class Signature {
   readonly s: bigint;
   constructor(readonly r: Point, s: bigint) {
-    if (!(r instanceof Point)) throw new Error('Expected Point instance');
+    if (!(r instanceof Point)) throw new Error("Expected Point instance");
     this.s = normalizeScalar(s);
   }
 
@@ -495,7 +522,9 @@ class Signature {
 export { ExtendedPoint, Point, Signature };
 
 function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-  if (!arrays.every((a) => a instanceof Uint8Array)) throw new Error('Expected Uint8Array list');
+  if (!arrays.every((a) => a instanceof Uint8Array)) {
+    throw new Error("Expected Uint8Array list");
+  }
   if (arrays.length === 1) return arrays[0];
   const length = arrays.reduce((a, arr) => a + arr.length, 0);
   const result = new Uint8Array(length);
@@ -509,10 +538,13 @@ function concatBytes(...arrays: Uint8Array[]): Uint8Array {
 
 // Convert between types
 // ---------------------
-const hexes = Array.from({ length: 256 }, (v, i) => i.toString(16).padStart(2, '0'));
+const hexes = Array.from(
+  { length: 256 },
+  (v, i) => i.toString(16).padStart(2, "0"),
+);
 function bytesToHex(uint8a: Uint8Array): string {
   // pre-caching improves the speed 6x
-  let hex = '';
+  let hex = "";
   for (let i = 0; i < uint8a.length; i++) {
     hex += hexes[uint8a[i]];
   }
@@ -521,23 +553,25 @@ function bytesToHex(uint8a: Uint8Array): string {
 
 // Caching slows it down 2-3x
 function hexToBytes(hex: string): Uint8Array {
-  if (typeof hex !== 'string') {
-    throw new TypeError('hexToBytes: expected string, got ' + typeof hex);
+  if (typeof hex !== "string") {
+    throw new TypeError("hexToBytes: expected string, got " + typeof hex);
   }
-  if (hex.length % 2) throw new Error('hexToBytes: received invalid unpadded hex');
+  if (hex.length % 2) {
+    throw new Error("hexToBytes: received invalid unpadded hex");
+  }
   const array = new Uint8Array(hex.length / 2);
   for (let i = 0; i < array.length; i++) {
     const j = i * 2;
     const hexByte = hex.slice(j, j + 2);
     const byte = Number.parseInt(hexByte, 16);
-    if (Number.isNaN(byte)) throw new Error('Invalid byte sequence');
+    if (Number.isNaN(byte)) throw new Error("Invalid byte sequence");
     array[i] = byte;
   }
   return array;
 }
 
 function numberToBytesBEPadded(num: bigint, length: number) {
-  const hex = num.toString(16).padStart(length * 2, '0');
+  const hex = num.toString(16).padStart(length * 2, "0");
   return hexToBytes(hex);
 }
 
@@ -574,7 +608,9 @@ function mod(a: bigint, b: bigint = CURVE.P) {
 // Inverses number over modulo
 function invert(number: bigint, modulo: bigint = CURVE.P): bigint {
   if (number === _0n || modulo <= _0n) {
-    throw new Error(`invert: expected positive integers, got n=${number} mod=${modulo}`);
+    throw new Error(
+      `invert: expected positive integers, got n=${number} mod=${modulo}`,
+    );
   }
   // Eucledian GCD https://brilliant.org/wiki/extended-euclidean-algorithm/
   let a = mod(number, modulo);
@@ -590,7 +626,7 @@ function invert(number: bigint, modulo: bigint = CURVE.P): bigint {
     b = a, a = r, x = u, y = v, u = m, v = n;
   }
   const gcd = b;
-  if (gcd !== _1n) throw new Error('invert: does not exist');
+  if (gcd !== _1n) throw new Error("invert: does not exist");
   return mod(x, modulo);
 }
 
@@ -656,18 +692,18 @@ function pow_2_252_3(x: bigint): bigint {
 // Ratio of u to v. Allows us to combine inversion and square root. Uses algo from RFC8032 5.1.3.
 // Constant-time
 // prettier-ignore
-function uvRatio(u: bigint, v: bigint): { isValid: boolean, value: bigint } {
-  const v3 = mod(v * v * v);                  // v³
-  const v7 = mod(v3 * v3 * v);                // v⁷
-  let x = mod(u * v3 * pow_2_252_3(u * v7));  // (uv³)(uv⁷)^(p-5)/8
-  const vx2 = mod(v * x * x);                 // vx²
-  const root1 = x;                            // First root candidate
-  const root2 = mod(x * SQRT_M1);             // Second root candidate
-  const useRoot1 = vx2 === u;                 // If vx² = u (mod p), x is a square root
-  const useRoot2 = vx2 === mod(-u);           // If vx² = -u, set x <-- x * 2^((p-1)/4)
-  const noRoot = vx2 === mod(-u * SQRT_M1);   // There is no valid root, vx² = -u√(-1)
+function uvRatio(u: bigint, v: bigint): { isValid: boolean; value: bigint } {
+  const v3 = mod(v * v * v); // v³
+  const v7 = mod(v3 * v3 * v); // v⁷
+  let x = mod(u * v3 * pow_2_252_3(u * v7)); // (uv³)(uv⁷)^(p-5)/8
+  const vx2 = mod(v * x * x); // vx²
+  const root1 = x; // First root candidate
+  const root2 = mod(x * SQRT_M1); // Second root candidate
+  const useRoot1 = vx2 === u; // If vx² = u (mod p), x is a square root
+  const useRoot2 = vx2 === mod(-u); // If vx² = -u, set x <-- x * 2^((p-1)/4)
+  const noRoot = vx2 === mod(-u * SQRT_M1); // There is no valid root, vx² = -u√(-1)
   if (useRoot1) x = root1;
-  if (useRoot2 || noRoot) x = root2;          // We return root2 anyway, for const-time
+  if (useRoot2 || noRoot) x = root2; // We return root2 anyway, for const-time
   if (edIsNegative(x)) x = mod(-x);
   return { isValid: useRoot1 || useRoot2, value: x };
 }
@@ -708,16 +744,17 @@ function assertLen(len: number, bytes: Uint8Array): void {
 }
 
 function normalizeScalar(num: number | bigint, max = CURVE.n): bigint {
-  if (typeof num === 'number' && num > 0 && Number.isSafeInteger(num)) return BigInt(num);
-  if (typeof num === 'bigint' && _0n < num && num < max) return num;
-  throw new TypeError('Expected valid scalar: 0 < scalar < max');
+  if (typeof num === "number" && num > 0 && Number.isSafeInteger(num)) {
+    return BigInt(num);
+  }
+  if (typeof num === "bigint" && _0n < num && num < max) return num;
+  throw new TypeError("Expected valid scalar: 0 < scalar < max");
 }
 
 function normalizePrivateKey(key: PrivKey): Uint8Array {
-  const bytes =
-    typeof key === 'bigint' || typeof key === 'number'
-      ? numberToBytesBEPadded(normalizeScalar(key, _2n ** BigInt(256)), 32)
-      : ensureBytes(key);
+  const bytes = typeof key === "bigint" || typeof key === "number"
+    ? numberToBytesBEPadded(normalizeScalar(key, _2n ** BigInt(256)), 32)
+    : ensureBytes(key);
   assertLen(32, bytes);
   return bytes;
 }
@@ -758,12 +795,20 @@ export async function sign(msgHash: Hex, privateKey: Hex): Promise<Uint8Array> {
 }
 
 // RFC8032 5.1.7
-export async function verify(sig: SigType, msgHash: Hex, publicKey: PubKey): Promise<boolean> {
+export async function verify(
+  sig: SigType,
+  msgHash: Hex,
+  publicKey: PubKey,
+): Promise<boolean> {
   msgHash = ensureBytes(msgHash);
   if (!(publicKey instanceof Point)) publicKey = Point.fromHex(publicKey);
   if (!(sig instanceof Signature)) sig = Signature.fromHex(sig);
   const SB = ExtendedPoint.BASE.multiply(sig.s);
-  const k = await sha512ModnLE(sig.r.toRawBytes(), publicKey.toRawBytes(), msgHash);
+  const k = await sha512ModnLE(
+    sig.r.toRawBytes(),
+    publicKey.toRawBytes(),
+    msgHash,
+  );
   const kA = ExtendedPoint.fromAffine(publicKey).multiplyUnsafe(k);
   const RkA = ExtendedPoint.fromAffine(sig.r).add(kA);
   // [8][S]B = [8]R + [8][k]A'
@@ -775,35 +820,24 @@ Point.BASE._setWindowSize(8);
 
 // Global symbol available in browsers only. Ensure we do not depend on @types/dom
 declare const self: Record<string, any> | undefined;
-const crypto: { node?: any; web?: any } = {
-  node: nodeCrypto,
-  web: typeof self === 'object' && 'crypto' in self ? self.crypto : undefined,
-};
 
 export const utils = {
   // The 8-torsion subgroup ℰ8.
   // Those are "buggy" points, if you multiply them by 8, you'll receive Point.ZERO.
   // Ported from curve25519-dalek.
   TORSION_SUBGROUP: [
-    '0100000000000000000000000000000000000000000000000000000000000000',
-    'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a',
-    '0000000000000000000000000000000000000000000000000000000000000080',
-    '26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05',
-    'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
-    '26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85',
-    '0000000000000000000000000000000000000000000000000000000000000000',
-    'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa',
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
   ],
   bytesToHex,
   randomBytes: (bytesLength: number = 32): Uint8Array => {
-    if (crypto.web) {
-      return crypto.web.getRandomValues(new Uint8Array(bytesLength));
-    } else if (crypto.node) {
-      const { randomBytes } = crypto.node;
-      return new Uint8Array(randomBytes(bytesLength).buffer);
-    } else {
-      throw new Error("The environment doesn't have randomBytes function");
-    }
+    return crypto.getRandomValues(new Uint8Array(bytesLength));
   },
   // Note: ed25519 private keys are uniform 32-bit strings. We do not need
   // to check for modulo bias like we do in noble-secp256k1 randomPrivateKey()
@@ -811,17 +845,13 @@ export const utils = {
     return utils.randomBytes(32);
   },
   sha512: async (message: Uint8Array): Promise<Uint8Array> => {
-    if (crypto.web) {
-      const buffer = await crypto.web.subtle.digest('SHA-512', message.buffer);
-      return new Uint8Array(buffer);
-    } else if (crypto.node) {
-      return new Uint8Array(crypto.node.createHash('sha512').update(message).digest().buffer);
-    } else {
-      throw new Error("The environment doesn't have sha512 function");
-    }
+    const buffer = await crypto.subtle.digest("SHA-512", message.buffer);
+    return new Uint8Array(buffer);
   },
   precompute(windowSize = 8, point = Point.BASE): Point {
-    const cached = point.equals(Point.BASE) ? point : new Point(point.x, point.y);
+    const cached = point.equals(Point.BASE)
+      ? point
+      : new Point(point.x, point.y);
     cached._setWindowSize(windowSize);
     cached.multiply(_1n);
     return cached;
