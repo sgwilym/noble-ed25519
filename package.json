@@ -1,7 +1,7 @@
 {
   "name": "@noble/ed25519",
-  "version": "1.4.0",
-  "description": "Fastest JS implementation of ed25519 & ristretto255. Auditable, high-security, 0-dependency pubkey, scalarmult & EDDSA",
+  "version": "1.6.0",
+  "description": "Fastest JS implementation of ed25519. Independently audited, high-security, 0-dependency EDDSA, X25519 ECDH, ristretto255 & scalarmult",
   "files": [
     "lib"
   ],
@@ -10,7 +10,7 @@
   "types": "lib/index.d.ts",
   "scripts": {
     "build": "tsc -d && tsc -p tsconfig.esm.json",
-    "build-release": "rollup -c rollup.config.js",
+    "build:release": "rollup -c rollup.config.js",
     "lint": "prettier --print-width 100 --single-quote --check index.ts",
     "test": "jest",
     "bench": "node test/benchmark.js"
@@ -51,7 +51,9 @@
     "signature",
     "ecc",
     "eddsa",
-    "ecdsa",
+    "RFC7748",
+    "RFC8032",
+    "ZIP215",
     "cryptography",
     "security"
   ],
@@ -69,5 +71,11 @@
     },
     "useStderr": true,
     "bail": 2
-  }
+  },
+  "funding": [
+    {
+      "type": "individual",
+      "url": "https://paulmillr.com/funding/"
+    }
+  ]
 }

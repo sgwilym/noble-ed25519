@@ -3,6 +3,7 @@ export {
   ExtendedPoint,
   getPublicKey,
   Point,
+  RistrettoPoint,
   sign,
   utils,
   verify,

@@ -3,6 +3,7 @@ import * as ed from '../';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
+import { default as zip215 } from './zip215.json';
 
 const hex = ed.utils.bytesToHex;
 
@@ -127,40 +128,24 @@ describe('ed25519', () => {
     });
   });
 
-  describe('Point#toX25519()', () => {
-    it('should convert base point to montgomery', async () => {
-      expect(ed.Point.BASE.toX25519()).toBe(9n);
+  describe('getSharedSecret()', () => {
+    it('should convert base point to montgomery using toX25519()', () => {
+      expect(hex(ed.Point.BASE.toX25519())).toBe(ed.curve25519.BASE_POINT_U);
     });
 
-    it('should convert TEST 1 to montgomery', async () => {
-      const priv = '4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb';
-      const pub = '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c';
-      const montgomery = '478dd307cdfb042d80d03e0f55227e4d982bedd1696ba700fc8ab894c504c725';
-
-      const point = ed.Point.fromHex(pub);
-      expect(point.toX25519().toString(16)).toBe(montgomery);
-    });
-
-    it('should convert TEST 2 to montgomery', async () => {
-      const priv = '000000000000000000000000000000000000000000000000000000000000000c';
-      const pub = '1262bc6d5408a3c4e025aa0c15e64f69197cdb38911be5ad344a949779df3da6';
-      const montgomery = '31c3ec9e22ce8ffd4fa9dfa1a698604b4de4921be0e09ca93f96c635bb8de1db';
-
-      const publicKey = await ed.getPublicKey(priv);
-      expect(hex(publicKey)).toBe(pub);
-      const point = ed.Point.fromHex(publicKey);
-      expect(point.toX25519().toString(16)).toBe(montgomery);
-    });
-
-    it('should convert TEST 3 to montgomery', async () => {
-      const priv = '0000000000000000000000000000000000000000000000000000000000000027';
-      const pub = 'd7e1ba312ceaf90c89566a9a7861316522a60edea4c2157eabf3d273169eac13';
-      const montgomery = '48d70b86a448c72a4b3960d399102d9ef401092fcbbcda8e69bc230bc73bb9d2';
-
-      const publicKey = await ed.getPublicKey(priv);
-      expect(hex(publicKey)).toBe(pub);
-      const point = ed.Point.fromHex(publicKey);
-      expect(point.toX25519().toString(16)).toBe(montgomery);
+    it('should be commutative', async () => {
+      for (let i = 0; i < 512; i++) {
+        const asec = ed.utils.randomPrivateKey();
+        const apub = await ed.getPublicKey(asec);
+        const bsec = ed.utils.randomPrivateKey();
+        const bpub = await ed.getPublicKey(bsec);
+        try {
+          expect(ed.getSharedSecret(asec, bpub)).toEqual(ed.getSharedSecret(bsec, apub));
+        } catch (error) {
+          console.error('not commutative', { asec, apub, bsec, bpub });
+          throw error;
+        }
+      }
     });
   });
 });
@@ -243,13 +228,7 @@ describe('rfc8032 vectors', () => {
 });
 
 describe('ristretto255', () => {
-  const { ExtendedPoint } = ed;
-  async function sha512(message: Uint8Array) {
-    const hash = createHash('sha512');
-    hash.update(message);
-    return Uint8Array.from(hash.digest());
-  }
-
+  const { RistrettoPoint } = ed;
   function arrayToHex(bytes: Uint8Array) {
     return Array.from(bytes)
       .map((a) => a.toString(16).padStart(2, '0'))
@@ -345,13 +324,11 @@ describe('ristretto255', () => {
       '46376b80f409b29dc2b5f6f0c52591990896e5716f41477cd30085ab7f10301e',
       'e0c418f7c8d9c4cdd7395b93ea124f3ad99021bb681dfc3302a9d99a2e53e64e',
     ];
-    let B = ExtendedPoint.BASE;
-    let P = ExtendedPoint.ZERO;
+    let B = RistrettoPoint.BASE;
+    let P = RistrettoPoint.ZERO;
     for (const encoded of encodingsOfSmallMultiples) {
-      expect(arrayToHex(P.toRistrettoBytes())).toBe(encoded);
-      expect(
-        arrayToHex(ExtendedPoint.fromRistrettoBytes(hexToArray(encoded)).toRistrettoBytes())
-      ).toBe(encoded);
+      expect(P.toHex()).toBe(encoded);
+      expect(RistrettoPoint.fromHex(encoded).toHex()).toBe(encoded);
       P = P.add(B);
     }
   });
@@ -393,10 +370,10 @@ describe('ristretto255', () => {
       'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
     ];
     for (const badBytes of badEncodings) {
-      expect(() => ExtendedPoint.fromRistrettoBytes(hexToArray(badBytes))).toThrow();
+      expect(() => RistrettoPoint.fromHex(hexToArray(badBytes))).toThrow();
     }
   });
-  it('should create right points from hash', async () => {
+  it('should create right points from uniform hash', async () => {
     const labels = [
       'Ristretto is traditionally a short shot of espresso coffee',
       'made with the normal amount of ground coffee but extracted with',
@@ -417,9 +394,142 @@ describe('ristretto255', () => {
     ];
 
     for (let i = 0; i < labels.length; i++) {
-      const hash = await sha512(Buffer.from(labels[i]));
-      const point = ExtendedPoint.fromRistrettoHash(hash);
-      expect(arrayToHex(point.toRistrettoBytes())).toBe(encodedHashToPoints[i]);
+      const hash = await ed.utils.sha512(utf8ToBytes(labels[i]));
+      const point = RistrettoPoint.hashToCurve(hash);
+      expect(point.toHex()).toBe(encodedHashToPoints[i]);
     }
+  });
+});
+
+const hexes = Array.from({ length: 256 }, (v, i) => i.toString(16).padStart(2, '0'));
+function bytesToHex(uint8a: Uint8Array): string {
+  // pre-caching improves the speed 6x
+  let hex = '';
+  for (let i = 0; i < uint8a.length; i++) {
+    hex += hexes[uint8a[i]];
+  }
+  return hex;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  if (typeof hex !== 'string') {
+    throw new TypeError('hexToBytes: expected string, got ' + typeof hex);
+  }
+  if (hex.length % 2) throw new Error('hexToBytes: received invalid unpadded hex');
+  const array = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < array.length; i++) {
+    const j = i * 2;
+    const hexByte = hex.slice(j, j + 2);
+    const byte = Number.parseInt(hexByte, 16);
+    if (Number.isNaN(byte)) throw new Error('Invalid byte sequence');
+    array[i] = byte;
+  }
+  return array;
+}
+
+declare const TextEncoder: any;
+declare const TextDecoder: any;
+
+export function utf8ToBytes(str: string): Uint8Array {
+  if (typeof str !== 'string') {
+    throw new TypeError(`utf8ToBytes expected string, got ${typeof str}`);
+  }
+  return new TextEncoder().encode(str);
+}
+
+describe('curve25519', () => {
+  it('scalarMult 1', () => {
+    const X25519_VECTORS = [
+      {
+        k: 'a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4',
+        u: 'e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c',
+        ku: 'c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552',
+      },
+      {
+        k: '4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d',
+        u: 'e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493',
+        ku: '95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957',
+      },
+    ];
+    for (const { k, u, ku } of X25519_VECTORS) {
+      const _k = Uint8Array.from(hexToBytes(k));
+      const _u = Uint8Array.from(hexToBytes(u));
+      expect(bytesToHex(ed.curve25519.scalarMult(_k, _u))).toBe(ku);
+    }
+  });
+  it('scalarMultBase recursive', () => {
+    // https://datatracker.ietf.org/doc/html/rfc7748#section-5.2
+    const VECTORS = [
+      { iters: 1, res: '422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079' },
+      { iters: 1000, res: '684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51' },
+      // {iters: 1000000, res: '7c3911e0ab2586fd864497297e575e6f3bc601c0883c30df5f4dd2d24f665424'},
+    ];
+    for (const { iters, res } of VECTORS) {
+      let k = hexToBytes('0900000000000000000000000000000000000000000000000000000000000000');
+      let u = k;
+      for (let i = 0; i < iters; i++) {
+        if (i > 0 && i % 100000 === 0) console.log('10k');
+        [k, u] = [ed.curve25519.scalarMult(k, u), k];
+      }
+      expect(bytesToHex(k)).toBe(res);
+    }
+  });
+  it('scalarMult 2', () => {
+    const a_priv = hexToBytes('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');
+    const a_pub = hexToBytes('8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a');
+    const b_priv = hexToBytes('5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb');
+    const b_pub = hexToBytes('de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f');
+    const k = '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742';
+
+    expect(bytesToHex(ed.curve25519.scalarMultBase(a_priv))).toBe(bytesToHex(a_pub));
+    expect(bytesToHex(ed.curve25519.scalarMultBase(b_priv))).toBe(bytesToHex(b_pub));
+    expect(bytesToHex(ed.curve25519.scalarMult(a_priv, b_pub))).toBe(k);
+    expect(bytesToHex(ed.curve25519.scalarMult(b_priv, a_pub))).toBe(k);
+  });
+});
+
+describe('input immutability', () => {
+  it('sign/verify are immutable', async () => {
+    const privateKey = ed.utils.randomPrivateKey();
+    const publicKey = await ed.getPublicKey(privateKey);
+
+    for (let i = 0; i < 100; i++) {
+      let payload = ed.utils.randomBytes(100);
+      let signature = await ed.sign(payload, privateKey);
+      if (!(await ed.verify(signature, payload, publicKey))) {
+        throw new Error('Signature verification failed');
+      }
+      const signatureCopy = Buffer.alloc(signature.byteLength);
+      signatureCopy.set(signature, 0); // <-- breaks
+      payload = payload.slice();
+      signature = signature.slice();
+
+      if (!(await ed.verify(signatureCopy, payload, publicKey))) {
+        throw new Error('Copied signature verification failed');
+      }
+    }
+  });
+});
+
+describe('ZIP-215 compliance tests', () => {
+  // https://zips.z.cash/zip-0215
+  // Vectors from https://gist.github.com/hdevalence/93ed42d17ecab8e42138b213812c8cc7
+  it('should pass all of them', async () => {
+    const str = utf8ToBytes('Zcash');
+    for (let v of zip215) {
+      let noble = false;
+      try {
+        noble = await ed.verify(v.sig_bytes, str, v.vk_bytes);
+      } catch (e) {
+        noble = false;
+      }
+      expect(noble).toBe(v.valid_zip215);
+    }
+  });
+  it('disallows sig.s >= CURVE.l', async () => {
+    const sig = new ed.Signature(ed.Point.BASE, 1n);
+    // @ts-ignore
+    sig.s = ed.CURVE.l + 1n;
+    expect(() => ed.verify(sig, 'deadbeef', ed.Point.BASE)).rejects.toThrowError();
   });
 });
